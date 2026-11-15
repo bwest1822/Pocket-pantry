@@ -168,10 +168,10 @@ function fresh(){return {household:4,lunches:1,kidMode:true,assumeStaples:true,e
   pantry:[],have:{},checked:{},favs:{},custom:[]};}
 let S = fresh();
 try{const raw=localStorage.getItem(LS_KEY); if(raw) S=Object.assign(fresh(),JSON.parse(raw));}catch(e){}
-let db=null, userId=null, userNs=null, sampleFn=null, shared=[]; let saveTimer=null, saving=false, dirty=false;
+let dbReady=false; let db=null, userId=null, userNs=null, sampleFn=null, shared=[]; let saveTimer=null, saving=false, dirty=false;
 function persist(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(S));}catch(e){}
-  if(!db||!userId) return;
+  if(!db||!userId||!dbReady) return;
   dirty=true; clearTimeout(saveTimer); saveTimer=setTimeout(flush,700);
 }
 async function flush(){
@@ -348,7 +348,8 @@ function renderPlan(){
     <button class="tog" aria-pressed="${S.equip.blackstone}" data-eq="blackstone">Blackstone</button>
     <button class="tog" aria-pressed="${S.equip.traeger}" data-eq="traeger">Traeger</button>
     <button class="tog" aria-pressed="${S.kidMode}" id="kid">Picky kids mode</button>
-  </div></div>`;
+  </div></div>
+  <h3>Move my plan</h3><div class="card"><p class="muted" style="font-size:13px;margin:0 0 8px">Copy your week, pantry, favorites and recipes from this version and paste them into the other one (Claude or Vercel).</p><div class="row"><button class="btn small" id="exp">Copy my data</button><button class="btn small" id="imp">Paste data</button></div></div>`;
   main.innerHTML=h;
   main.querySelector('#auto').onclick=autoPlan;
   main.querySelector('#goList').onclick=()=>setTab('list');
@@ -363,6 +364,8 @@ function renderPlan(){
   main.querySelector('#lu').onchange=e=>{S.lunches=+e.target.value; persist(); render();};
   main.querySelectorAll('[data-eq]').forEach(b=>b.onclick=()=>{S.equip[b.dataset.eq]=!S.equip[b.dataset.eq]; persist(); render();});
   main.querySelector('#kid').onclick=()=>{S.kidMode=!S.kidMode; persist(); render();};
+  main.querySelector('#exp').onclick=()=>copyText('PP1:'+btoa(unescape(encodeURIComponent(JSON.stringify(S)))),'Data copied. Paste it in the other version.');
+  main.querySelector('#imp').onclick=openImport;
 }
 
 function cats(){ const set=new Set(allRecipes().map(r=>r.category)); const list=CAT_ORDER.filter(c=>set.has(c)); if(S.custom.length) list.push('My Recipes'); if(shared.length) list.push('From Friends'); return ['All','Favorites'].concat(list); }
@@ -486,6 +489,10 @@ async function askIdeas(){
   scanState.ideasBusy=false; if(tab==='pantry') renderPantry();
 }
 
+function openImport(){
+  openSheet('Paste your data','<p class="muted">Paste the code from “Copy my data”. This replaces the plan, pantry, favorites and recipes here.</p><label for="impT" style="position:absolute;left:-9999px">Data code</label><textarea id="impT" placeholder="PP1:…"></textarea><div class="row" style="margin-top:10px"><button class="btn primary" id="impGo">Replace with this data</button><span id="impMsg" class="miss"></span></div>');
+  document.getElementById('impGo').onclick=()=>{ try{ const v=document.getElementById('impT').value.trim().replace(/^PP1:/,''); const o=JSON.parse(decodeURIComponent(escape(atob(v)))); if(!o||!o.plan) throw 0; S=Object.assign(fresh(),o); persist(); closeSheet(); render(); toast('Your data is here'); }catch(e){ document.getElementById('impMsg').textContent='That code didn’t work. Copy it again and paste the whole thing.'; } };
+}
 /* ---------- sheets ---------- */
 const sheet=document.getElementById('sheet'), sheetBg=document.getElementById('sheetBg');
 let lastFocus=null;
@@ -592,6 +599,7 @@ if(!S.plan.days.some(d=>d.id)) autoPlan(); else render();
       let loaded=false; const timer=setTimeout(()=>{ if(!loaded) setSync('Saved on this device'); },10000);
       try{ const doc=await db.collection('data/users/'+userId).doc('state').get(); loaded=true; clearTimeout(timer);
         const data=doc&&(typeof doc.data==='function'?doc.data():doc); const exists=doc&&(doc.exists===undefined?!!data:doc.exists);
+        dbReady=true;
         if(exists&&data&&data.json){ S=Object.assign(fresh(),JSON.parse(data.json)); try{localStorage.setItem(LS_KEY,JSON.stringify(S));}catch(e){} }
         else { persist(); }
         setSync('Synced to your account');

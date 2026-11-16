@@ -204,7 +204,7 @@ const KEYRULES=[
 ];
 function keyOf(item){ const s=item.toLowerCase().replace(/\(.*?\)/g,' ').trim(); for(const [re,k] of KEYRULES){ if(re.test(s)) return k; } return toks(item).join(' ')||s; }
 function normUnit(u){ u=(u||'').trim(); u=u.replace(/^(jar|can|carton|bag|pack|packet|box|bottle|tub|head)s\b/,'$1'); if(u==='cups')return 'cup'; if(u==='lbs')return 'lb'; return u; }
-const COUNT_UNIT=/^(|jar|can|carton|bag|pack|packet|box|bottle|tub|head|bunch|sleeve|pouch|slices|cloves|stalks|clove|slice)\b/;
+const COUNT_UNIT=/^$|^(jar|can|carton|bag|pack|packet|box|bottle|tub|head|bunch|sleeve|pouch|slices|cloves|stalks|clove|slice)\b/;
 function prep(r,src){
   r.ingredients=(r.ingredients||[]).map(i=>Object.assign({},i,{unit:normUnit(i.unit),key:keyOf(i.item||''),opt:/optional/i.test(i.item||'')}));
   r.tags=r.tags||[]; r.kid=r.tags.includes('kid-friendly'); r.src=src; r.night=r.night||(r.category==='Crockpot'?'Crockpot':'Easy');
@@ -224,8 +224,9 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;'
 function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('show'),1800); }
 
 /* ---------- scaling ---------- */
-function dinnerFactor(r,d){ if(d&&d.mult) return d.mult; const target=S.household+S.lunches; const f=target/(r.servings||4); return Math.max(0.5,Math.round(f*4)/4); }
-function servingsFor(r,f){ return Math.round((r.servings||4)*f); }
+function dinnerFactor(r,d){ if(d&&d.mult) return d.mult; if(!r.servings) return 1; const target=S.household+S.lunches; const f=target/(r.servings||4); return Math.max(0.5,Math.round(f*4)/4); }
+function servingsFor(r,f){ return r.servings?Math.round(r.servings*f):null; }
+function yieldText(r,f){ const n=servingsFor(r,f); if(n!=null) return n+' servings'; return f===1?'as written':'×'+frac(f)+' batch'; }
 
 /* ---------- pantry matching ---------- */
 function pantryHas(key){
@@ -325,7 +326,7 @@ function renderPlan(){
   S.plan.days.forEach((d,i)=>{ const r=d.id?byId(d.id):null; const f=r?dinnerFactor(r,d):1;
     h+=`<div class="day" style="--c:${TYPE_COLOR[d.type]}">
       <div class="dname">${d.day}<small>${esc(d.type)}</small></div>
-      <div>${r?`<button class="meal" data-open="${esc(r.id)}" data-f="${f}">${esc(r.name)}</button><div class="meta"><span>${servingsFor(r,f)} servings</span><span>· ${esc(r.cook||'')}</span>${r.kid?'<span class="chip">kid pick</span>':''}</div>`
+      <div>${r?`<button class="meal" data-open="${esc(r.id)}" data-f="${f}">${esc(r.name)}</button><div class="meta"><span>${yieldText(r,f)}</span><span>· ${esc(r.cook||'')}</span>${r.kid?'<span class="chip">kid pick</span>':''}</div>`
         :`<span class="muted">${d.type==='Off'?'Night off / leftovers':'Nothing planned'}</span>`}
         <div class="row" style="margin-top:6px"><label class="muted" style="font-size:12px" for="ty${i}">Night</label><select id="ty${i}" data-type="${i}">${TYPES.map(t=>`<option${t===d.type?' selected':''}>${t}</option>`).join('')}</select></div>
       </div>
@@ -505,12 +506,12 @@ function openRecipe(id,f){
   const r=byId(id); if(!r) return;
   let factor=f||(isDinner(r)?dinnerFactor(r):1);
   const draw=()=>{
-    const ing=r.ingredients.map(x=>`<li class="${x.pantry?'pantry':''}"><span class="q">${esc(qtyStr(x.qty*factor<0.1?x.qty*factor:roundQty(x.qty*factor,COUNT_UNIT.test(x.unit)?'xx':x.unit),x.unit))}</span><span>${esc(x.item)}${pantryHas(x.key)?' <span class="chip">have</span>':''}</span></li>`).join('');
+    const ing=r.ingredients.map(x=>`<li class="${x.pantry?'pantry':''}"><span class="q">${esc(qtyStr(COUNT_UNIT.test(x.unit)&&factor===1?x.qty:roundQty(x.qty*factor,x.unit),x.unit))}</span><span>${esc(x.item)}${pantryHas(x.key)?' <span class="chip">have</span>':''}</span></li>`).join('');
     const dayOpts=DAYS.map((d,i)=>`<option value="${i}">${DAYFULL[d]}${S.plan.days[i].id?' (replace)':''}</option>`).join('');
     const canShare = r.src==='mine' && db && userId;
     const h=`<div class="row" style="gap:6px;margin-bottom:6px"><span class="chip">${esc(r.category)}</span>${r.night?`<span class="chip m">${esc(r.night)}</span>`:''}${r.cook?`<span class="chip g">${esc(r.cook)}</span>`:''}${r.kid?'<span class="chip">kid pick</span>':''}</div>
       ${r.source?`<p class="muted" style="font-size:13px;margin:4px 0">From: ${esc(r.source)}</p>`:''}
-      <div class="scale"><button class="iconbtn" id="dn" aria-label="Fewer servings">−</button><b id="sv">${servingsFor(r,factor)}</b><span>servings</span><button class="iconbtn" id="up" aria-label="More servings">+</button><span class="muted" style="font-size:13px">(recipe makes ${r.servings||4})</span></div>
+      <div class="scale"><button class="iconbtn" id="dn" aria-label="Fewer servings">−</button><b id="sv">${r.servings?servingsFor(r,factor):'×'+frac(factor)}</b><span>${r.servings?'servings':'batch'}</span><button class="iconbtn" id="up" aria-label="More servings">+</button><span class="muted" style="font-size:13px">${r.servings?'(recipe makes '+r.servings+')':'(servings not listed)'}</span></div>
       <h3>Ingredients</h3><ul class="ing">${ing}</ul>
       <h3>Steps</h3><ol class="steps">${(r.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
       ${r.notes?`<div class="note"><b>Tip:</b> ${esc(r.notes)}</div>`:''}
@@ -522,8 +523,8 @@ function openRecipe(id,f){
       </div>`;
     document.getElementById('shBody').innerHTML=h;
     const q=s=>document.getElementById(s);
-    q('dn').onclick=()=>{ const step=1/(r.servings||4); factor=Math.max(step,factor-step); draw(); };
-    q('up').onclick=()=>{ factor+=1/(r.servings||4); draw(); };
+    q('dn').onclick=()=>{ const step=r.servings?1/r.servings:0.5; factor=Math.max(step,factor-step); draw(); };
+    q('up').onclick=()=>{ factor+=r.servings?1/r.servings:0.5; draw(); };
     if(q('addDay')) q('addDay').onclick=()=>{ const i=+q('toDay').value; const d=S.plan.days[i]; d.id=r.id; d.mult=Math.abs(factor-dinnerFactor(r,{}))<1e-6?null:factor; if(d.type==='Off') d.type=r.category==='Crockpot'?'Crockpot':'Easy'; autoExtras(); persist(); closeSheet(); render(); toast(`Added to ${DAYFULL[d.day]}`); };
     if(q('addPrep')) q('addPrep').onclick=()=>{ S.plan.prep.push(r.id); persist(); closeSheet(); render(); toast('Added to prep day'); };
     if(q('addBkf')) q('addBkf').onclick=()=>{ S.plan.breakfast.push(r.id); persist(); closeSheet(); render(); toast('Added to breakfasts'); };

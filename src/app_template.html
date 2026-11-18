@@ -165,7 +165,7 @@ const DEFAULT_TYPES = {Sun:'Big Cook',Mon:'Easy',Tue:'Crockpot',Wed:'Easy',Thu:'
 const LS_KEY='pocketpantry.v1';
 function fresh(){return {household:4,lunches:1,kidMode:true,assumeStaples:true,equip:{crockpot:true,blackstone:true,traeger:true},
   plan:{days:DAYS.map(d=>({day:d,type:DEFAULT_TYPES[d],id:null,mult:null})),prep:[],breakfast:[]},
-  pantry:[],have:{},checked:{},favs:{},custom:[]};}
+  pantry:[],have:{},checked:{},favs:{},custom:[],cooked:[]};}
 let S = fresh();
 try{const raw=localStorage.getItem(LS_KEY); if(raw) S=Object.assign(fresh(),JSON.parse(raw));}catch(e){}
 let dbReady=false; let db=null, userId=null, userNs=null, sampleFn=null, shared=[]; let saveTimer=null, saving=false, dirty=false;
@@ -193,8 +193,8 @@ const KEYRULES=[
  [/chuck roast/,'chuck roast'],[/pork shoulder|pork butt/,'pork shoulder'],[/pork tenderloin/,'pork tenderloin'],[/shaved steak|ribeye/,'shaved steak'],
  [/marinara|pizza sauce/,'marinara / pizza sauce'],[/alfredo/,'Alfredo sauce'],[/salsa verde/,'salsa verde'],[/salsa/,'mild salsa'],
  [/cheddar|mexican blend|monterey jack/,'shredded cheddar'],[/mozzarella/,'shredded mozzarella'],[/parmesan/,'Parmesan'],[/provolone|swiss|white american/,'sliced provolone'],[/american cheese|cheddar cheese slices|american or cheddar/,'American cheese slices'],
- [/cream cheese/,'cream cheese'],[/sour cream/,'sour cream'],[/ricotta/,'ricotta'],[/yogurt/,'vanilla yogurt'],[/^eggs?$|^egg /,'eggs'],[/milk/,'milk'],[/butter/,'butter'],
- [/large tortilla|tortillas or rice/,'large flour tortillas'],[/tortilla chip/,'tortilla chips'],[/tortilla/,'small tortillas'],[/hoagie/,'hoagie rolls'],[/hawaiian roll/,'Hawaiian rolls'],[/slider bun/,'slider buns'],[/bun/,'buns'],[/naan/,'naan'],[/bread|texas toast/,'bread'],
+ [/cream cheese/,'cream cheese'],[/sour cream/,'sour cream'],[/ricotta/,'ricotta'],[/yogurt/,'vanilla yogurt'],[/egg noodle/,'egg noodles'],[/^eggs?$|^egg /,'eggs'],[/milk/,'milk'],[/butter/,'butter'],
+ [/breadcrumb|bread crumb/,'breadcrumbs'],[/rice or mashed potatoes|mashed potato/,'mashed potatoes (pouch)'],[/large tortilla|tortillas or rice/,'large flour tortillas'],[/tortilla chip/,'tortilla chips'],[/tortilla/,'small tortillas'],[/hoagie/,'hoagie rolls'],[/hawaiian roll/,'Hawaiian rolls'],[/slider bun/,'slider buns'],[/bun/,'buns'],[/naan/,'naan'],[/bread|texas toast/,'bread'],
  [/russet|potatoes/,'potatoes'],[/hash brown/,'frozen hash browns'],[/tater tot|fries or tots/,'frozen fries / tots'],
  [/green bean/,'green beans'],[/broccoli/,'broccoli'],[/peas and carrots/,'frozen peas & carrots'],[/frozen peas|^peas/,'frozen peas'],[/mixed vegetables|mixed veg/,'frozen mixed vegetables'],[/stir-fry/,'frozen stir-fry veggies'],[/black beans/,'black beans'],[/corn on the cob/,'corn on the cob'],[/corn/,'corn'],
  [/yellow onion|^onions?$/,'yellow onions'],[/garlic powder/,'garlic powder'],[/garlic/,'garlic'],[/bell pepper|green bell/,'bell peppers'],[/lime/,'limes'],[/baby carrot|carrots/,'carrots'],[/spinach/,'baby spinach'],[/banana/,'bananas'],[/berries|blueberries/,'berries'],
@@ -251,13 +251,13 @@ function candidates(type){
 function planKeys(excludeIdx){ const ks=new Set(); S.plan.days.forEach((d,i)=>{ if(i===excludeIdx||!d.id) return; const r=byId(d.id); if(r) r.ingredients.forEach(x=>{ if(!x.pantry&&!/^cooked/.test(x.key)) ks.add(x.key); }); }); return ks; }
 function score(r,keys,used,prevProt,makesChicken){
   let s=0; r.ingredients.forEach(x=>{ if(!x.pantry&&keys.has(x.key)) s+=2; if(!x.pantry&&pantryHas(x.key)) s+=1.5; });
-  if(S.kidMode&&r.kid) s+=2.5; if(S.favs[r.id]) s+=3; if(used.has(r.id)) s-=100;
+  if(S.kidMode&&r.kid) s+=2.5; if(S.favs[r.id]) s+=3; if((S.cooked||[]).some(c=>c.id===r.id&&c.kids==='yes')) s+=2; if((S.cooked||[]).some(c=>c.id===r.id&&c.kids==='no')) s-=2; if(used.has(r.id)) s-=100;
   if(prevProt&&MAIN_PROT(r)===prevProt) s-=2;
   if(r.ingredients.some(x=>x.key==='cooked chicken')) s+= makesChicken?3:-1;
   return s+Math.random()*3;
 }
 function pickFor(i){
-  const d=S.plan.days[i]; if(d.type==='Off'){d.id=null;return;}
+  const d=S.plan.days[i]; d.cooked=false; d.cookedRef=null; if(d.type==='Off'){d.id=null;return;}
   const cands=candidates(d.type); if(!cands.length){d.id=null;return;}
   const keys=planKeys(i); const used=new Set(S.plan.days.filter((x,j)=>j!==i&&x.id).map(x=>x.id));
   const prev=i>0&&S.plan.days[i-1].id?byId(S.plan.days[i-1].id):null; const prevProt=prev?MAIN_PROT(prev):null;
@@ -326,7 +326,8 @@ function renderPlan(){
   S.plan.days.forEach((d,i)=>{ const r=d.id?byId(d.id):null; const f=r?dinnerFactor(r,d):1;
     h+=`<div class="day" style="--c:${TYPE_COLOR[d.type]}">
       <div class="dname">${d.day}<small>${esc(d.type)}</small></div>
-      <div>${r?`<button class="meal" data-open="${esc(r.id)}" data-f="${f}">${esc(r.name)}</button><div class="meta"><span>${yieldText(r,f)}</span><span>· ${esc(r.cook||'')}</span>${r.kid?'<span class="chip">kid pick</span>':''}</div>`
+      <div>${r?`<button class="meal" data-open="${esc(r.id)}" data-f="${f}">${esc(r.name)}</button><div class="meta"><span>${yieldText(r,f)}</span><span>· ${esc(r.cook||'')}</span>${r.kid?'<span class="chip">kid pick</span>':''}</div>
+        <div class="row" style="margin-top:6px">${d.cooked?`<span class="chip">Cooked ✓</span>${S.favs[r.id]?'<span class="chip m">★ Favorite</span>':''}<button class="havebtn" data-cook="${i}">Edit</button>`:`<button class="btn small" data-cook="${i}">Cooked it? Rate it</button>`}</div>`
         :`<span class="muted">${d.type==='Off'?'Night off / leftovers':'Nothing planned'}</span>`}
         <div class="row" style="margin-top:6px"><label class="muted" style="font-size:12px" for="ty${i}">Night</label><select id="ty${i}" data-type="${i}">${TYPES.map(t=>`<option${t===d.type?' selected':''}>${t}</option>`).join('')}</select></div>
       </div>
@@ -356,6 +357,7 @@ function renderPlan(){
   main.querySelector('#goList').onclick=()=>setTab('list');
   main.querySelectorAll('[data-shuffle]').forEach(b=>b.onclick=()=>{const i=+b.dataset.shuffle; if(S.plan.days[i].type==='Off') S.plan.days[i].type=DEFAULT_TYPES[S.plan.days[i].day]==='Off'?'Easy':DEFAULT_TYPES[S.plan.days[i].day]; pickFor(i); autoExtras(); persist(); render();});
   main.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>openPicker(+b.dataset.pick));
+  main.querySelectorAll('[data-cook]').forEach(b=>b.onclick=()=>openCooked(+b.dataset.cook));
   main.querySelectorAll('[data-type]').forEach(s=>s.onchange=()=>{const i=+s.dataset.type; S.plan.days[i].type=s.value; pickFor(i); autoExtras(); persist(); render();});
   main.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openRecipe(b.dataset.open, b.dataset.f?+b.dataset.f:null));
   main.querySelectorAll('[data-rmprep]').forEach(b=>b.onclick=()=>{S.plan.prep=S.plan.prep.filter(x=>x!==b.dataset.rmprep); persist(); render();});
@@ -369,10 +371,10 @@ function renderPlan(){
   main.querySelector('#imp').onclick=openImport;
 }
 
-function cats(){ const set=new Set(allRecipes().map(r=>r.category)); const list=CAT_ORDER.filter(c=>set.has(c)); if(S.custom.length) list.push('My Recipes'); if(shared.length) list.push('From Friends'); return ['All','Favorites'].concat(list); }
+function cats(){ const set=new Set(allRecipes().map(r=>r.category)); const list=CAT_ORDER.filter(c=>set.has(c)); if(S.custom.length) list.push('My Recipes'); if(shared.length) list.push('From Friends'); return ['All','Favorites'].concat((S.cooked||[]).length?['Cooked']:[],list); }
 function renderRecipes(){
   let list=allRecipes();
-  if(rcat==='Favorites') list=list.filter(r=>S.favs[r.id]); else if(rcat==='My Recipes') list=list.filter(r=>r.src==='mine'); else if(rcat==='From Friends') list=list.filter(r=>r.src==='friend'); else if(rcat!=='All') list=list.filter(r=>r.category===rcat);
+  if(rcat==='Favorites') list=list.filter(r=>S.favs[r.id]); else if(rcat==='Cooked'){ const ids=[...new Set((S.cooked||[]).slice().reverse().map(c=>c.id))]; list=ids.map(byId).filter(Boolean); } else if(rcat==='My Recipes') list=list.filter(r=>r.src==='mine'); else if(rcat==='From Friends') list=list.filter(r=>r.src==='friend'); else if(rcat!=='All') list=list.filter(r=>r.category===rcat);
   if(rq){ const q=rq.toLowerCase(); list=list.filter(r=>(r.name+' '+r.tags.join(' ')+' '+r.ingredients.map(i=>i.item).join(' ')).toLowerCase().includes(q)); }
   let h=`<h2>Recipes</h2><div class="row" style="justify-content:space-between"><p class="sub" style="margin:0">${allRecipes().length} recipes</p>${sampleFn?'<button class="btn small primary" id="addR">Add a recipe</button>':''}</div>
   <label for="rs" class="muted" style="position:absolute;left:-9999px">Search recipes</label><input class="search" id="rs" type="search" placeholder="Search: chicken, tacos, cream cheese…" value="${esc(rq)}">
@@ -494,6 +496,35 @@ function openImport(){
   openSheet('Paste your data','<p class="muted">Paste the code from “Copy my data”. This replaces the plan, pantry, favorites and recipes here.</p><label for="impT" style="position:absolute;left:-9999px">Data code</label><textarea id="impT" placeholder="PP1:…"></textarea><div class="row" style="margin-top:10px"><button class="btn primary" id="impGo">Replace with this data</button><span id="impMsg" class="miss"></span></div>');
   document.getElementById('impGo').onclick=()=>{ try{ const v=document.getElementById('impT').value.trim().replace(/^PP1:/,''); const o=JSON.parse(decodeURIComponent(escape(atob(v)))); if(!o||!o.plan) throw 0; S=Object.assign(fresh(),o); persist(); closeSheet(); render(); toast('Your data is here'); }catch(e){ document.getElementById('impMsg').textContent='That code didn’t work. Copy it again and paste the whole thing.'; } };
 }
+function cookedHistory(r){
+  const h=(S.cooked||[]).filter(c=>c.id===r.id); if(!h.length) return '';
+  const last=h[h.length-1]; const kids={yes:'Kids liked it',no:'Kids weren’t fans',some:'Kids were so-so'};
+  return `<div class="note" style="background:var(--basil-soft)"><b>Cooked ${h.length} time${h.length>1?'s':''}</b> · last ${esc(new Date(last.date).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}${last.kids?' · '+kids[last.kids]:''}${h.filter(c=>c.note).slice(-3).map(c=>`<div style="margin-top:6px">“${esc(c.note)}”</div>`).join('')}</div>`;
+}
+function openCooked(i){
+  const d=S.plan.days[i]; const r=byId(d.id); if(!r) return;
+  S.cooked=S.cooked||[];
+  const prev=d.cookedRef!=null?S.cooked[d.cookedRef]:null;
+  let fav=!!S.favs[r.id], kids=prev?prev.kids:'';
+  const draw=()=>{
+    document.getElementById('shBody').innerHTML=`<p class="muted" style="margin-top:0">How did ${esc(r.name)} go?</p>
+    <button class="btn ${fav?'primary':''}" id="cfav" aria-pressed="${fav}" style="width:100%;padding:14px;font-size:16px">${fav?'★ Saved to favorites':'☆ Save to favorites'}</button>
+    <h3>Did the kids eat it?</h3><div class="toggles">${[['yes','Yes'],['some','Kind of'],['no','No']].map(([v,l])=>`<button class="tog" aria-pressed="${kids===v}" data-kids="${v}">${l}</button>`).join('')}</div>
+    <h3>Notes for next time</h3><label for="cnote" style="position:absolute;left:-9999px">Notes</label><textarea id="cnote" style="min-height:80px" placeholder="e.g. Double the sauce, cook on HIGH 3 hrs">${esc(prev?prev.note||'':'')}</textarea>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="csave">Save</button>${prev?'<button class="btn" id="cundo">Not cooked</button>':''}</div>`;
+    document.getElementById('cfav').onclick=()=>{fav=!fav; draw();};
+    document.querySelectorAll('[data-kids]').forEach(b=>b.onclick=()=>{kids=kids===b.dataset.kids?'':b.dataset.kids; const n=document.getElementById('cnote').value; draw(); document.getElementById('cnote').value=n;});
+    document.getElementById('csave').onclick=()=>{
+      const note=document.getElementById('cnote').value.trim();
+      const entry={id:r.id,date:Date.now(),kids,note};
+      if(prev){ Object.assign(prev,{kids,note}); } else { S.cooked.push(entry); d.cookedRef=S.cooked.length-1; }
+      d.cooked=true; if(fav) S.favs[r.id]=true; else delete S.favs[r.id];
+      persist(); closeSheet(); render(); toast(fav?'Saved to favorites':'Marked as cooked');
+    };
+    const u=document.getElementById('cundo'); if(u) u.onclick=()=>{ S.cooked.splice(d.cookedRef,1); S.plan.days.forEach(x=>{ if(x.cookedRef!=null&&x.cookedRef>d.cookedRef) x.cookedRef--; }); d.cooked=false; d.cookedRef=null; persist(); closeSheet(); render(); };
+  };
+  openSheet('Cooked it',''); draw();
+}
 /* ---------- sheets ---------- */
 const sheet=document.getElementById('sheet'), sheetBg=document.getElementById('sheetBg');
 let lastFocus=null;
@@ -512,6 +543,7 @@ function openRecipe(id,f){
     const h=`<div class="row" style="gap:6px;margin-bottom:6px"><span class="chip">${esc(r.category)}</span>${r.night?`<span class="chip m">${esc(r.night)}</span>`:''}${r.cook?`<span class="chip g">${esc(r.cook)}</span>`:''}${r.kid?'<span class="chip">kid pick</span>':''}</div>
       ${r.source?`<p class="muted" style="font-size:13px;margin:4px 0">From: ${esc(r.source)}</p>`:''}
       <div class="scale"><button class="iconbtn" id="dn" aria-label="Fewer servings">−</button><b id="sv">${r.servings?servingsFor(r,factor):'×'+frac(factor)}</b><span>${r.servings?'servings':'batch'}</span><button class="iconbtn" id="up" aria-label="More servings">+</button><span class="muted" style="font-size:13px">${r.servings?'(recipe makes '+r.servings+')':'(servings not listed)'}</span></div>
+      ${cookedHistory(r)}
       <h3>Ingredients</h3><ul class="ing">${ing}</ul>
       <h3>Steps</h3><ol class="steps">${(r.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
       ${r.notes?`<div class="note"><b>Tip:</b> ${esc(r.notes)}</div>`:''}
@@ -525,7 +557,7 @@ function openRecipe(id,f){
     const q=s=>document.getElementById(s);
     q('dn').onclick=()=>{ const step=r.servings?1/r.servings:0.5; factor=Math.max(step,factor-step); draw(); };
     q('up').onclick=()=>{ factor+=r.servings?1/r.servings:0.5; draw(); };
-    if(q('addDay')) q('addDay').onclick=()=>{ const i=+q('toDay').value; const d=S.plan.days[i]; d.id=r.id; d.mult=Math.abs(factor-dinnerFactor(r,{}))<1e-6?null:factor; if(d.type==='Off') d.type=r.category==='Crockpot'?'Crockpot':'Easy'; autoExtras(); persist(); closeSheet(); render(); toast(`Added to ${DAYFULL[d.day]}`); };
+    if(q('addDay')) q('addDay').onclick=()=>{ const i=+q('toDay').value; const d=S.plan.days[i]; d.id=r.id; d.cooked=false; d.cookedRef=null; d.mult=Math.abs(factor-dinnerFactor(r,{}))<1e-6?null:factor; if(d.type==='Off') d.type=r.category==='Crockpot'?'Crockpot':'Easy'; autoExtras(); persist(); closeSheet(); render(); toast(`Added to ${DAYFULL[d.day]}`); };
     if(q('addPrep')) q('addPrep').onclick=()=>{ S.plan.prep.push(r.id); persist(); closeSheet(); render(); toast('Added to prep day'); };
     if(q('addBkf')) q('addBkf').onclick=()=>{ S.plan.breakfast.push(r.id); persist(); closeSheet(); render(); toast('Added to breakfasts'); };
     q('fav').onclick=()=>{ if(S.favs[r.id]) delete S.favs[r.id]; else S.favs[r.id]=true; persist(); draw(); render(); };
@@ -541,7 +573,7 @@ function openPicker(i){
     const cands=new Set(candidates(d.type).map(r=>r.id));
     list.sort((a,b)=>(cands.has(b.id)-cands.has(a.id))||((S.favs[b.id]?1:0)-(S.favs[a.id]?1:0))||a.name.localeCompare(b.name));
     document.getElementById('pickList').innerHTML=list.map(r=>`<button class="rc" data-choose="${esc(r.id)}" style="--c:${CAT_COLOR[r.category]||'var(--basil)'}"><span class="sw"></span><span><b>${S.favs[r.id]?'<span class="star">★</span> ':''}${esc(r.name)}</b><span class="meta"><span>${esc(r.category)}</span>${cands.has(r.id)?`<span class="chip m">fits ${esc(d.type)}</span>`:''}${r.kid?'<span class="chip">kid pick</span>':''}</span></span></button>`).join('');
-    document.querySelectorAll('[data-choose]').forEach(b=>b.onclick=()=>{ d.id=b.dataset.choose; d.mult=null; if(d.type==='Off') d.type='Easy'; autoExtras(); persist(); closeSheet(); render(); });
+    document.querySelectorAll('[data-choose]').forEach(b=>b.onclick=()=>{ d.id=b.dataset.choose; d.mult=null; d.cooked=false; d.cookedRef=null; if(d.type==='Off') d.type='Easy'; autoExtras(); persist(); closeSheet(); render(); });
   };
   openSheet(`Choose ${DAYFULL[d.day]}'s dinner`,`<input class="search" id="pq" type="search" placeholder="Search recipes" aria-label="Search recipes"><div class="row" style="margin-bottom:8px"><button class="btn small" id="offN">Make it a night off</button></div><div class="stack" id="pickList"></div>`);
   document.getElementById('pq').oninput=e=>{q=e.target.value; draw();};

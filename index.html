@@ -165,7 +165,7 @@ const DEFAULT_TYPES = {Sun:'Big Cook',Mon:'Easy',Tue:'Crockpot',Wed:'Easy',Thu:'
 const LS_KEY='pocketpantry.v1';
 function fresh(){return {household:4,lunches:1,kidMode:true,assumeStaples:true,equip:{crockpot:true,blackstone:true,traeger:true},
   plan:{days:DAYS.map(d=>({day:d,type:DEFAULT_TYPES[d],id:null,mult:null})),prep:[],breakfast:[]},
-  pantry:[],have:{},checked:{},favs:{},custom:[],cooked:[]};}
+  pantry:[],have:{},checked:{},favs:{},custom:[],cooked:[],bought:{}};}
 let S = fresh();
 try{const raw=localStorage.getItem(LS_KEY); if(raw) S=Object.assign(fresh(),JSON.parse(raw));}catch(e){}
 let dbReady=false; let db=null, userId=null, userNs=null, sampleFn=null, shared=[]; let saveTimer=null, saving=false, dirty=false;
@@ -279,7 +279,7 @@ function autoExtras(){
     S.plan.breakfast=[a&&a[1].id,b&&b[1].id].filter(Boolean);
   }
 }
-function autoPlan(){ S.plan.days.forEach(d=>{d.id=null;d.mult=null;}); S.plan.breakfast=[]; S.plan.prep=[]; for(let i=0;i<7;i++) pickFor(i); autoExtras(); S.checked={}; persist(); render(); toast('New week planned'); }
+function autoPlan(){ S.plan.days.forEach(d=>{d.id=null;d.mult=null;}); S.plan.breakfast=[]; S.plan.prep=[]; for(let i=0;i<7;i++) pickFor(i); autoExtras(); S.checked={}; S.bought={}; persist(); render(); toast('New week planned'); }
 
 /* ---------- grocery ---------- */
 function planItems(){
@@ -316,7 +316,7 @@ function render(){
 }
 
 function renderPlan(){
-  const g=grocery(); const buy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples));
+  const g=grocery(); S.bought=S.bought||{}; applyBought(g); const buy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples)&&(!S.bought[x.key]||x.boughtPart));
   const shared=g.filter(x=>x.uses.size>1&&!x.pantry).length;
   const dinners=S.plan.days.filter(d=>d.id).length;
   let h=`<h2>This week</h2><p class="sub">Dinners sized for ${S.household} + ${S.lunches} lunch${S.lunches===1?'':'es'}. Tap a meal to open it, or the shuffle button for another pick.</p>
@@ -390,20 +390,25 @@ function renderRecipes(){
 }
 
 function renderList(){
-  const g=grocery();
-  const toBuy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples));
-  const staples=g.filter(x=>!x.have&&x.pantry&&S.assumeStaples);
-  const have=g.filter(x=>x.have);
+  const g=grocery(); S.bought=S.bought||{}; applyBought(g);
+  const bought=g.filter(x=>S.bought[x.key]&&!x.boughtPart);
+  const notBought=x=>!S.bought[x.key]||x.boughtPart;
+  const toBuy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples)&&notBought(x));
+  const staples=g.filter(x=>!x.have&&x.pantry&&S.assumeStaples&&notBought(x));
+  const have=g.filter(x=>x.have&&notBought(x));
   const done=toBuy.filter(x=>S.checked[x.key]).length;
   let h=`<h2>Grocery list</h2><p class="sub">Combined across ${planItems().length} recipes. Items you already have are moved to the bottom.</p>
-  <div class="row" style="margin-bottom:6px"><button class="btn primary" id="copy">Copy list</button><button class="btn" id="order">Order with Claude</button><button class="btn" id="clr">Uncheck all</button></div>
+  ${toBuy.length?`<button class="btn primary" id="bought" style="width:100%;padding:13px;font-size:16px;margin-bottom:8px">Groceries bought</button>`:''}
+  <div class="row" style="margin-bottom:6px"><button class="btn" id="copy">Copy list</button><button class="btn" id="order">Order with Claude</button><button class="btn" id="clr">Uncheck all</button></div>
   <p class="muted" style="font-size:13px;margin:6px 0 0">${done} of ${toBuy.length} in the cart</p>`;
-  if(!toBuy.length&&!staples.length) h+=`<p class="empty">Plan some meals on the Week tab and your list shows up here.</p>`;
+  if(!toBuy.length&&bought.length) h+=`<div class="card" style="margin-top:12px;text-align:center"><b>You're stocked for this week ✓</b><p class="muted" style="font-size:14px;margin:4px 0 0">Anything you add to the week from now on shows up here as a new item to buy.</p></div>`;
+  else if(!toBuy.length&&!staples.length) h+=`<p class="empty">Plan some meals on the Week tab and your list shows up here.</p>`;
   const left=toBuy.filter(x=>!S.checked[x.key]), inCart=toBuy.filter(x=>S.checked[x.key]);
   if(toBuy.length&&!left.length) h+=`<p class="empty">Everything's in the cart.</p>`;
   SECTIONS.forEach(sec=>{ const items=left.filter(x=>x.section===sec); if(!items.length) return;
     h+=`<div class="gsec"><h3><span>${esc(sec)}</span><span>${items.length}</span></h3>`;
     items.sort((a,b)=>a.name.localeCompare(b.name)).forEach(x=>h+=itemRow(x,true)); h+=`</div>`; });
+  if(bought.length){ h+=`<details class="card" style="margin-top:16px"><summary>Bought this week: ${bought.length}</summary><p class="muted" style="font-size:13px">Tap “Need it” to put one back on the list.</p>${bought.map(x=>`<div class="gitem"><span></span><span><span class="nm">${esc(x.name)}</span><div><button class="havebtn" data-unbuy="${esc(x.key)}">Need it</button></div></span><span class="qty">${esc(x.qtyText)}</span></div>`).join('')}<button class="btn small" id="unbuyAll" style="margin-top:10px">Undo groceries bought</button></details>`; }
   if(inCart.length){ h+=`<details class="card" style="margin-top:16px"><summary>In the cart: ${inCart.length}</summary><p class="muted" style="font-size:13px">Uncheck an item to put it back on the list.</p>${inCart.map(x=>itemRow(x,true)).join('')}</details>`; }
   if(staples.length){ h+=`<details class="card" style="margin-top:10px"><summary>Check you have: ${staples.length} staples</summary><p class="muted" style="font-size:13px">Spices, oils and condiments. Tap “Have it” or check to add to the cart.</p>${staples.map(x=>itemRow(x,true)).join('')}</details>`; }
   if(have.length){ h+=`<details class="card" style="margin-top:10px"><summary>Already have: ${have.length}</summary><p class="muted" style="font-size:13px">From your pantry. Tap “Need it” to move one back to the list.</p>${have.map(x=>itemRow(x,false)).join('')}</details>`; }
@@ -411,9 +416,19 @@ function renderList(){
   main.querySelectorAll('input[data-chk]').forEach(c=>c.onchange=()=>{ if(c.checked){ S.checked[c.dataset.chk]=true; toast("Moved to In the cart"); } else delete S.checked[c.dataset.chk]; persist(); renderList(); });
   main.querySelectorAll('[data-have]').forEach(b=>b.onclick=()=>{ S.have[b.dataset.have]=true; persist(); renderList(); toast('Moved to Already have'); });
   main.querySelectorAll('[data-need]').forEach(b=>b.onclick=()=>{ const k=b.dataset.need; delete S.have[k]; S.pantry=S.pantry.filter(p=>{const pk=keyOf(p); const pt=toks(p), kt=toks(k); return !(pk===k||pt.every(w=>kt.includes(w))||kt.every(w=>pt.includes(w)));}); persist(); renderList(); });
+  const bb=main.querySelector('#bought'); if(bb) bb.onclick=()=>{ g.forEach(x=>{ if(!x.have) S.bought[x.key]=Object.assign({}, (typeof S.bought[x.key]==='object'?S.bought[x.key]:{}), x.fullAmts||x.amts); }); S.checked={}; persist(); renderList(); main.scrollTop=0; toast('Groceries bought. List cleared'); };
+  main.querySelectorAll('[data-unbuy]').forEach(b=>b.onclick=()=>{ delete S.bought[b.dataset.unbuy]; persist(); renderList(); });
+  const ub=main.querySelector('#unbuyAll'); if(ub) ub.onclick=()=>{ S.bought={}; persist(); renderList(); toast('List restored'); };
   main.querySelector('#copy').onclick=()=>copyText(listText(toBuy,staples),'List copied');
   main.querySelector('#order').onclick=openOrder;
   main.querySelector('#clr').onclick=()=>{S.checked={}; persist(); renderList();};
+}
+// Items marked bought stay off the list unless the week now needs more of them.
+function applyBought(g){
+  g.forEach(x=>{ const b=S.bought[x.key]; if(!b) return; x.fullAmts=Object.assign({},x.amts);
+    if(b===true) return;
+    const extra={}; Object.entries(x.amts).forEach(([u,q])=>{ const d=q-(b[u]||0); if(d>0.05) extra[u]=d; });
+    if(Object.keys(extra).length){ x.amts=extra; x.qtyText=Object.entries(extra).map(([u,q])=>qtyStr(roundQty(q,u),u)).join(' + ')+' more'; x.boughtPart=true; } });
 }
 function itemRow(x,buy){
   const chk=!!S.checked[x.key];
@@ -430,7 +445,7 @@ function listText(toBuy,staples){
 }
 async function copyText(t,msg){ try{ await navigator.clipboard.writeText(t); toast(msg); }catch(e){ openSheet('Copy your list',`<p class="muted">Select all and copy:</p><textarea id="cpy" readonly>${esc(t)}</textarea>`); const ta=document.getElementById('cpy'); ta.focus(); ta.select(); } }
 function openOrder(){
-  const g=grocery(); const toBuy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples));
+  const g=grocery(); S.bought=S.bought||{}; applyBought(g); const toBuy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples)&&(!S.bought[x.key]||x.boughtPart));
   const msg='Compare prices for this grocery list at Kroger and Walmart, tell me which has everything and which is cheaper, then add it to the cart I pick in my Chrome browser. Don\'t check out.\n\n'+listText(toBuy,[]);
   openSheet('Order with Claude',`<p>Claude can fill your Kroger or Walmart cart in your Chrome browser, where you're already signed in. It compares both stores first. You review the cart and check out yourself.</p>
   <ol class="steps"><li>Tap <b>Copy request</b>.</li><li>Open a chat with Claude on a computer that has Chrome and the Claude extension running.</li><li>Paste and send.</li></ol>

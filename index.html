@@ -235,6 +235,7 @@ function prep(r,src){
 BUILTIN.forEach(r=>{ r.ingredients=r.ingredients.map(i=>Array.isArray(i)?{qty:i[0],unit:i[1],item:i[2],section:i[3],pantry:!!i[4]}:i); prep(r,'builtin'); });
 function allRecipes(){ return BUILTIN.concat(S.custom.map(r=>prep(r,'mine')), shared.map(r=>prep(r,'friend'))); }
 function byId(id){ return allRecipes().find(r=>r.id===id); }
+function planRecipes(){ return allRecipes().filter(r=>r.src!=='friend'); }
 function equipOK(r){ if(r.category==='Crockpot'&&!S.equip.crockpot)return false; if(r.category==='Blackstone'&&!S.equip.blackstone)return false; if(r.category==='Traeger'&&!S.equip.traeger)return false; return true; }
 function isDinner(r){ return !['Breakfast','Prep Day','Lunch','Snack'].includes(r.category) && !r.tags.includes('side') && !r.tags.includes('appetizer'); }
 
@@ -260,7 +261,7 @@ function pantryHas(key){
 /* ---------- auto planner ---------- */
 const MAIN_PROT=r=>{ const k=r.ingredients.find(i=>i.section==='Meat'); return k?k.key.split(' ').slice(-1)[0]:'veg'; };
 function candidates(type){
-  const all=allRecipes().filter(r=>isDinner(r)&&equipOK(r)&&!(S.kidMode&&r.tags.includes('spicy')));
+  const all=planRecipes().filter(r=>isDinner(r)&&equipOK(r)&&!(S.kidMode&&r.tags.includes('spicy')));
   switch(type){
     case 'Easy': return all.filter(r=>r.night==='Easy'&&!['Crockpot'].includes(r.category));
     case 'Crockpot': return S.equip.crockpot? all.filter(r=>r.category==='Crockpot') : all.filter(r=>r.night==='Easy');
@@ -295,14 +296,14 @@ function autoExtras(){
   if(needs('cooked rice')) prepSet.add('prep-rice');
   S.plan.prep=[...prepSet].filter(id=>byId(id));
   if(S.plan.breakfast.length===0){
-    const keys=planKeys(-1); const bk=allRecipes().filter(r=>r.category==='Breakfast');
+    const keys=planKeys(-1); const bk=planRecipes().filter(r=>r.category==='Breakfast');
     const pick=(list)=>list.map(r=>[ (r.ingredients.filter(x=>keys.has(x.key)).length*2)+(r.kid?2:0)+Math.random()*3,r]).sort((a,b)=>b[0]-a[0])[0];
     const a=pick(bk.filter(r=>r.night==='Prep Day')); const b=pick(bk.filter(r=>r.night!=='Prep Day'));
     S.plan.breakfast=[a&&a[1].id,b&&b[1].id].filter(Boolean);
   }
   const leftovers=ids.some(r=>r.tags.includes('makes leftovers'))||S.plan.prep.includes('prep-shredded-chicken');
   [['lunch','Lunch'],['snacks','Snack']].forEach(([k,cat])=>{ if(Array.isArray(S.plan[k])) return;
-    const pool=allRecipes().filter(r=>r.category===cat).map(r=>[(r.kid?2:0)+(S.favs[r.id]?3:0)+((k==='lunch'&&leftovers&&r.tags.includes('uses leftovers'))?3:0)+(r.ingredients.filter(x=>planKeys(-1).has(x.key)).length)+Math.random()*3,r]).sort((a,b)=>b[0]-a[0]);
+    const pool=planRecipes().filter(r=>r.category===cat).map(r=>[(r.kid?2:0)+(S.favs[r.id]?3:0)+((k==='lunch'&&leftovers&&r.tags.includes('uses leftovers'))?3:0)+(r.ingredients.filter(x=>planKeys(-1).has(x.key)).length)+Math.random()*3,r]).sort((a,b)=>b[0]-a[0]);
     S.plan[k]=pool.slice(0,2).map(x=>x[1].id); });
 }
 function autoPlan(silent){ S.plan.days.forEach((d,i)=>{d.id=null;d.mult=null;d.feeds2=false;d.leftFrom=null;d.pickedBy=null; d.type=d.type==='Off'?DEFAULT_TYPES[d.day]:d.type;}); S.plan.breakfast=[]; S.plan.prep=[]; delete S.plan.lunch; delete S.plan.snacks; S.plan.sides=[]; S.prepDone={};
@@ -430,7 +431,7 @@ function renderRecipes(){
   let list=allRecipes();
   if(rcat==='Favorites') list=list.filter(r=>S.favs[r.id]); else if(rcat==='Cooked'){ const ids=[...new Set((S.cooked||[]).slice().reverse().map(c=>c.id))]; list=ids.map(byId).filter(Boolean); } else if(rcat==='My Recipes') list=list.filter(r=>r.src==='mine'); else if(rcat==='From Friends') list=list.filter(r=>r.src==='friend'||friendFavs.has(r.id)); else if(rcat!=='All') list=list.filter(r=>r.category===rcat);
   if(rq){ const q=rq.toLowerCase(); list=list.filter(r=>(r.name+' '+r.tags.join(' ')+' '+r.ingredients.map(i=>i.item).join(' ')).toLowerCase().includes(q)); }
-  let h=`<h2>Recipes</h2><div class="row" style="justify-content:space-between"><p class="sub" style="margin:0">${allRecipes().length} recipes</p>${sampleFn?'<button class="btn small primary" id="addR">Add a recipe</button>':''}</div>
+  let h=`<h2>Recipes</h2><div class="row" style="justify-content:space-between"><p class="sub" style="margin:0">${allRecipes().length} recipes</p><button class="btn small primary" id="addR">Add a recipe</button></div>
   <label for="rs" class="muted" style="position:absolute;left:-9999px">Search recipes</label><input class="search" id="rs" type="search" placeholder="Search: chicken, tacos, cream cheese…" value="${esc(rq)}">
   <div class="cats">${cats().map(c=>`<button class="tog" aria-pressed="${c===rcat}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div><div class="rgrid">`;
   if(!list.length) h+=`<p class="empty">${rcat==='Favorites'?'Tap the star on any recipe to save it here.':'No recipes match.'}</p>`;
@@ -611,7 +612,7 @@ function openRecipe(id,f){
   const draw=()=>{
     const ing=r.ingredients.map(x=>`<li class="${x.pantry?'pantry':''}"><span class="q">${esc(qtyStr(COUNT_UNIT.test(x.unit)&&factor===1?x.qty:roundQty(x.qty*factor,x.unit),x.unit))}</span><span>${esc(x.item)}${pantryHas(x.key)?' <span class="chip">have</span>':''}</span></li>`).join('');
     const dayOpts=DAYS.map((d,i)=>`<option value="${i}">${DAYFULL[d]}${S.plan.days[i].id?' (replace)':''}</option>`).join('');
-    const canShare = r.src==='mine' && db && userId;
+    const canShare = r.src==='mine' && ((db && userId) || sbOn());
     const h=`<div class="row" style="gap:6px;margin-bottom:6px"><span class="chip">${esc(r.category)}</span>${r.night?`<span class="chip m">${esc(r.night)}</span>`:''}${r.cook?`<span class="chip g">${esc(r.cook)}</span>`:''}${r.kid?'<span class="chip">kid pick</span>':''}${proteinText(r)?`<span class="chip g">${esc(proteinText(r))} (est.)</span>`:''}</div>
       ${r.source?`<p class="muted" style="font-size:13px;margin:4px 0">From: ${esc(r.source)}</p>`:''}
       <div class="scale"><button class="iconbtn" id="dn" aria-label="Fewer servings">−</button><b id="sv">${r.servings?servingsFor(r,factor):'×'+frac(factor)}</b><span>${r.servings?'servings':'batch'}</span><button class="iconbtn" id="up" aria-label="More servings">+</button><span class="muted" style="font-size:13px">${r.servings?'(recipe makes '+r.servings+')':'(servings not listed)'}</span></div>
@@ -626,6 +627,7 @@ function openRecipe(id,f){
         ${r.category==='Prep Day'&&!S.plan.prep.includes(r.id)?`<button class="btn primary" id="addPrep">Add to prep day</button>`:''}
         ${EXTRA.filter(e=>e.match(r)&&!(S.plan[e.k]||[]).includes(r.id)).map(e=>`<button class="btn primary" data-addto="${e.k}">Add to this week's ${e.label.toLowerCase()}</button>`).join('')}
         <button class="btn" id="cmode">Start cooking mode</button>
+        ${r.src==='friend'?`<button class="btn primary" id="copyR">Add to my cookbook</button>`:''}
         <div class="row"><button class="btn" id="fav">${S.favs[r.id]?'★ Saved to favorites':'☆ Save to favorites'}</button>${canShare?`<button class="btn" id="shareR">${r.shared?'Shared with friends':'Share with friends'}</button>`:''}${r.src==='mine'?`<button class="btn" id="delR">Delete</button>`:''}</div>
       </div>`;
     document.getElementById('shBody').innerHTML=h;
@@ -639,6 +641,7 @@ function openRecipe(id,f){
     q('cmode').onclick=()=>{ closeSheet(); openCookMode(r.id,factor); };
     q('fav').onclick=()=>{ if(S.favs[r.id]) delete S.favs[r.id]; else S.favs[r.id]=true; favChanged(); persist(); draw(); render(); };
     if(q('shareR')) q('shareR').onclick=()=>shareRecipe(r,draw);
+    if(q('copyR')) q('copyR').onclick=()=>{ const c=JSON.parse(JSON.stringify({id:'my-'+Date.now().toString(36),name:r.name,category:r.category,night:r.night,servings:r.servings,cook:r.cook,tags:(r.tags||[]).filter(x=>x!=='from friends'),ingredients:r.ingredients.map(i=>({qty:i.qty,unit:i.unit,item:i.item,section:i.section,pantry:!!i.pantry})),steps:r.steps,notes:r.notes,source:r.source})); S.custom.push(c); persist(); closeSheet(); render(); toast('Added to your cookbook'); };
     if(q('delR')) q('delR').onclick=()=>{ if(q('delR').dataset.sure){ S.custom=S.custom.filter(x=>x.id!==r.id); S.plan.days.forEach(d=>{if(d.id===r.id)d.id=null;}); persist(); if(r.shared) syncShared(); closeSheet(); render(); toast('Recipe deleted'); } else { q('delR').dataset.sure='1'; q('delR').textContent='Tap again to delete'; } };
   };
   openSheet(r.name,''); draw();
@@ -660,11 +663,12 @@ function openPicker(i){
 
 /* ---------- add recipe ---------- */
 function openAdd(){
-  const ok=!!sampleFn;
+  const ok=!!sampleFn; if(!ok){ openTypeForm(); return; }
   openSheet('Add a recipe',`<p class="muted">${ok?'Paste a recipe, a reel caption, or describe how you make it. Claude turns it into a recipe card.':'Adding recipes needs Claude. Open Pocket Pantry signed in to Claude to use this.'}</p>
   <label for="rtext" style="position:absolute;left:-9999px">Recipe text</label><textarea id="rtext" placeholder="e.g. Grandma's chicken spaghetti: 2 cans cream of chicken, rotel, velveeta…"></textarea>
   <div class="row" style="margin-top:10px"><label for="rcat2" class="muted" style="font-size:14px">Category</label><select id="rcat2" class="btn small">${['Auto'].concat(CAT_ORDER).map(c=>`<option>${c}</option>`).join('')}</select></div>
-  <div class="row" style="margin-top:10px"><button class="btn primary" id="parse" ${ok?'':'disabled'}>Make recipe card</button><span id="pst" class="muted" style="font-size:14px"></span></div>`);
+  <div class="row" style="margin-top:10px"><button class="btn primary" id="parse" ${ok?'':'disabled'}>Make recipe card</button><span id="pst" class="muted" style="font-size:14px"></span></div><button class="havebtn" id="typeIt" style="margin-top:10px">Or type it in yourself</button>`);
+  document.getElementById('typeIt').onclick=()=>openTypeForm();
   const pb=document.getElementById('parse');
   pb.onclick=async()=>{
     const txt=document.getElementById('rtext').value.trim(); if(!txt){document.getElementById('pst').textContent='Paste a recipe first.';return;}
@@ -692,7 +696,11 @@ async function syncShared(){
   try{ await db.collection('shared').doc(userId).set({recipes:JSON.stringify(mine),favs:JSON.stringify(favIds),t:Date.now()}); }catch(e){ if(!syncShared.quiet) toast('Couldn\'t share. Ask the owner for edit access.'); }
 }
 let favTimer=null; function favChanged(){ if(!db||!userId) return; clearTimeout(favTimer); favTimer=setTimeout(()=>{ syncShared.quiet=true; syncShared().finally(()=>{syncShared.quiet=false;}); },1500); }
-async function shareRecipe(r,redraw){ r.shared=!r.shared; const c=S.custom.find(x=>x.id===r.id); if(c) c.shared=r.shared; persist(); await syncShared(); toast(r.shared?'Shared with friends':'No longer shared'); redraw(); }
+async function shareRecipe(r,redraw){ if(sbOn()){ if(r.shared){ toast('Already shared with friends'); return; }
+    const go=async()=>{ try{ await sbShare(r); r.shared=true; const c=S.custom.find(x=>x.id===r.id); if(c) c.shared=true; persist(); toast('Shared with friends'); }catch(e){ toast(e.message); } };
+    if(!S.myName){ openSheet('Share with friends',`<p class="muted" style="margin-top:0">Friends see your recipe in their From Friends tab. Text only, no photos.</p><label class="muted" for="myN" style="font-size:13px">Your name, as friends will see it<input id="myN" class="search" maxlength="40" placeholder="e.g. Braxton"></label><div class="row" style="margin-top:10px"><button class="btn primary" id="myGo">Share it</button></div>`);
+      document.getElementById('myGo').onclick=async()=>{ S.myName=document.getElementById('myN').value.trim().slice(0,40)||'A friend'; persist(); await go(); openRecipe(r.id); }; return; }
+    await go(); redraw(); return; } r.shared=!r.shared; const c=S.custom.find(x=>x.id===r.id); if(c) c.shared=r.shared; persist(); await syncShared(); toast(r.shared?'Shared with friends':'No longer shared'); redraw(); }
 async function loadShared(){
   try{ const snap=await db.collection('shared').get(); const out=[]; const ff=new Set();
     (snap.docs||snap||[]).forEach(d=>{ const id=d.id; if(id===userId) return; const data=typeof d.data==='function'?d.data():d; try{ JSON.parse(data.recipes||'[]').forEach(r=>{ r.id='f-'+id.slice(0,6)+'-'+r.id; r.source='Shared by a friend'; out.push(r); }); JSON.parse(data.favs||'[]').forEach(f=>ff.add(f)); }catch(e){} });
@@ -770,7 +778,7 @@ const PKG={'sour cream':[2,'cup','16 oz tub'],'cream cheese':[8,'oz','8 oz block
 function useItUp(){
   const g=grocery(); const inPlan=new Set(planItems().map(x=>x.r.id)); const out=[];
   g.forEach(x=>{ const p=PKG[x.key]; if(!p) return; const q=x.amts[p[1]]; if(!q) return; const left=Math.ceil(q/p[0]-1e-6)*p[0]-q; if(left<p[0]*0.25||left<0.25) return;
-    const sug=allRecipes().filter(r=>!inPlan.has(r.id)&&equipOK(r)&&r.ingredients.some(i=>i.key===x.key)).sort((a,b)=>((b.kid?1:0)+(S.favs[b.id]?2:0)+kidScore(b))-((a.kid?1:0)+(S.favs[a.id]?2:0)+kidScore(a))).slice(0,2);
+    const sug=planRecipes().filter(r=>!inPlan.has(r.id)&&equipOK(r)&&r.ingredients.some(i=>i.key===x.key)).sort((a,b)=>((b.kid?1:0)+(S.favs[b.id]?2:0)+kidScore(b))-((a.kid?1:0)+(S.favs[a.id]?2:0)+kidScore(a))).slice(0,2);
     out.push({name:x.key,left:qtyStr(Math.round(left*4)/4,p[1]),sug}); });
   return out.slice(0,3);
 }
@@ -845,7 +853,7 @@ async function openCookMode(id,f){
 /* ---------- kids pick ---------- */
 function openKidsPick(){
   const kids=kidsList(); const inPlan=new Set(S.plan.days.map(d=>d.id).filter(Boolean));
-  const pool=allRecipes().filter(r=>isDinner(r)&&equipOK(r)&&r.kid&&!r.tags.includes('spicy')&&!inPlan.has(r.id));
+  const pool=planRecipes().filter(r=>isDinner(r)&&equipOK(r)&&r.kid&&!r.tags.includes('spicy')&&!inPlan.has(r.id));
   const opts={}; kids.forEach(k=>{ opts[k]=pool.map(r=>[ (S.favs[r.id]?2:0)+kidScore(r)+Math.random()*3, r]).sort((a,b)=>b[0]-a[0]).slice(0,6).map(x=>x[1]); });
   const draw=()=>{ document.getElementById('shBody').innerHTML=`<p class="muted" style="margin-top:0">Each kid taps one dinner. It goes on an open weeknight.</p>`+kids.map(k=>{ const picked=S.plan.days.find(d=>d.pickedBy===k);
     return `<h3>${esc(k)}'s pick${picked?` · <span style="color:var(--basil);text-transform:none;letter-spacing:0">${esc(byId(picked.id)?.name||'')} on ${DAYFULL[picked.day]}</span>`:''}</h3><div class="kpgrid">${opts[k].map(r=>`<button class="kp" data-kp="${esc(k)}|${esc(r.id)}">${esc(r.name)}</button>`).join('')}</div>`; }).join('');
@@ -904,8 +912,61 @@ function normalize(s){
   return s;
 }
 
+/* ---------- friends' recipe box (Supabase, text only) ---------- */
+const SB_URL='https://rnqimtqdeydwwungreni.supabase.co', SB_KEY='sb_publishable_OwXc-Jp314Vy-7wbEIR54w_S_WMd-hm';
+let onClaude=false;
+function sbOn(){ return !onClaude; }
+function deviceId(){ try{ let d=localStorage.getItem('pp.device'); if(!d){ d='d'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('pp.device',d); } return d; }catch(e){ return 'd-nostorage-'+Math.random().toString(36).slice(2); } }
+async function sbLoad(){
+  if(!sbOn()) return;
+  try{ const r=await fetch(SB_URL+'/rest/v1/pp_recipes?select=id,name,author,category,servings,cook,ingredients,steps,notes,device,created_at&order=created_at.desc&limit=200',{headers:{apikey:SB_KEY}});
+    if(!r.ok) return; const rows=await r.json(); const me=deviceId();
+    shared=rows.filter(x=>x.device!==me).map(x=>({id:'sb-'+x.id,name:x.name,category:x.category,night:x.category==='Crockpot'?'Crockpot':'Easy',servings:x.servings||undefined,cook:x.cook||'',tags:['from friends'],
+      ingredients:(x.ingredients||[]).slice(0,40).map(i=>({qty:+i.qty||1,unit:String(i.unit||'').slice(0,20),item:String(i.item||'').slice(0,80),section:SECTIONS.includes(i.section)?i.section:'Other',pantry:!!i.pantry})),
+      steps:(x.steps||[]).slice(0,25).map(s=>String(s).slice(0,400)),notes:x.notes||'',source:'Shared by '+(x.author||'a friend')}));
+    S.sharedIds=rows.filter(x=>x.device===me).map(x=>x.name); render();
+  }catch(e){}
+}
+async function sbShare(r){
+  const body={name:String(r.name).slice(0,80),author:(S.myName||'').slice(0,40)||null,category:CAT_ORDER.includes(r.category)?r.category:'Weeknight',servings:r.servings?Math.min(30,Math.max(1,Math.round(r.servings))):null,cook:(r.cook||'').slice(0,60)||null,
+    ingredients:r.ingredients.slice(0,40).map(i=>({qty:i.qty,unit:String(i.unit||'').slice(0,20),item:String(i.item||'').slice(0,80),section:i.section,pantry:!!i.pantry})),
+    steps:(r.steps||[]).slice(0,25).map(s=>String(s).slice(0,400)),notes:(r.notes||'').slice(0,500)||null,device:deviceId()};
+  const res=await fetch(SB_URL+'/rest/v1/pp_recipes',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify(body)});
+  if(!res.ok){ const t=await res.text(); throw new Error(/limit/i.test(t)?'You’ve shared 5 recipes today. Try again tomorrow.':/full/i.test(t)?'The friends’ recipe box is full.':'Couldn’t share. Check the recipe has a name, ingredients and steps.'); }
+}
+
+/* ---------- type-in recipe form ---------- */
+const SEC_GUESS=[[/chicken|beef|pork|turkey|sausage|bacon|steak|ham\b|roast|meatball|shrimp|fish|salmon/i,'Meat'],[/milk|cheese|cheddar|mozzarella|parmesan|butter|cream|yogurt|egg/i,'Dairy'],[/onion|pepper|garlic|potato|carrot|celery|lettuce|tomato(?!.*(sauce|can))|lime|lemon|apple|banana|berr|spinach|broccoli|zucchini|cilantro|avocado/i,'Produce'],[/frozen/i,'Frozen'],[/pasta|spaghetti|noodle|macaroni|penne|marinara|alfredo/i,'Pasta & Sauce'],[/rice|bread|bun|roll|tortilla|oats/i,'Bread & Grains'],[/broth|soup mix|gravy|seasoning packet|ranch packet/i,'Soups & Mixes'],[/can|beans|rotel/i,'Canned Goods'],[/salt|pepper\b|paprika|cumin|oregano|powder|seasoning|cinnamon/i,'Spices'],[/flour|sugar|baking|honey|syrup|chips/i,'Baking'],[/ketchup|mustard|mayo|sauce|dressing|vinegar|salsa/i,'Condiments']];
+const PANTRY_GUESS=/salt|pepper\b|powder|paprika|cumin|oregano|seasoning|oil|flour|sugar|butter|ketchup|mustard|mayo|vinegar|soy sauce|honey/i;
+function parseQty(s){ s=(s||'').replace(/½/g,' 1/2').replace(/¼/g,' 1/4').replace(/¾/g,' 3/4').replace(/⅓/g,' 1/3').replace(/⅔/g,' 2/3').trim(); if(!s) return null; let t=0; s.split(/\s+/).forEach(p=>{ if(/^\d+\/\d+$/.test(p)){ const [a,b]=p.split('/'); t+=+a/+b; } else if(/^\d*\.?\d+$/.test(p)) t+=+p; }); return t||null; }
+function parseIngLine(line){
+  const m=line.trim().match(/^([\d\s\/.½¼¾⅓⅔]+)?\s*(lbs?|pounds?|oz|ounces?|cups?|c\.|tbsp|tablespoons?|tsp|teaspoons?|cans?|jars?|packets?|pkgs?|packages?|bags?|boxes?|cloves?|slices?|bunch(?:es)?|sticks?|heads?)?\.?\s*(?:of\s+)?(.*)$/i);
+  const qty=parseQty(m&&m[1])||1; let unit=(m&&m[2]||'').toLowerCase(); const item=(m&&m[3]||line).trim();
+  unit=unit.replace(/^pounds?$|^lbs$/,'lb').replace(/^ounces?$/,'oz').replace(/^cups$|^c\.$/,'cup').replace(/^tablespoons?$/,'tbsp').replace(/^teaspoons?$/,'tsp').replace(/s$/,'').replace(/^package$|^pkg$/,'pack').replace(/^boxe$/,'box').replace(/^bunche$/,'bunch').replace(/^clove$/,'cloves').replace(/^slice$/,'slices');
+  const sec=(SEC_GUESS.find(([re])=>re.test(item))||[0,'Other'])[1];
+  return {qty:Math.round(qty*100)/100,unit,item:item.slice(0,80),section:sec,pantry:PANTRY_GUESS.test(item)&&!/chicken|beef/i.test(item)};
+}
+function openTypeForm(prefill){
+  openSheet('Type in a recipe',`<p class="muted" style="margin-top:0">Words only, no photos. One ingredient per line (like “2 lb chicken breasts”), one step per line.</p>
+  <div class="stack" style="gap:10px">
+  <label class="muted" for="fName" style="font-size:13px">Recipe name<input id="fName" class="search" style="margin:4px 0 0" maxlength="80" value="${esc(prefill||'')}"></label>
+  <div class="settings"><label for="fCat">Category<select id="fCat">${CAT_ORDER.map(c=>`<option>${c}</option>`).join('')}</select></label>
+  <label for="fServ">Servings<input id="fServ" type="number" min="1" max="30" value="4"></label></div>
+  <label class="muted" for="fCook" style="font-size:13px">Cook time<input id="fCook" class="search" style="margin:4px 0 0" maxlength="60" placeholder="e.g. 30 min, or LOW 6 hr"></label>
+  <label class="muted" for="fIng" style="font-size:13px">Ingredients<textarea id="fIng" style="min-height:130px" placeholder="2 lb chicken breasts&#10;1 can cream of chicken soup&#10;1 cup shredded cheddar"></textarea></label>
+  <label class="muted" for="fSteps" style="font-size:13px">Steps<textarea id="fSteps" style="min-height:110px" placeholder="Put chicken in the Crockpot.&#10;Pour soup over it.&#10;Cook LOW 6 hr, shred, top with cheese."></textarea></label>
+  <label class="muted" for="fNotes" style="font-size:13px">Tip for picky eaters (optional)<input id="fNotes" class="search" style="margin:4px 0 0" maxlength="500"></label>
+  </div><div class="row" style="margin-top:12px"><button class="btn primary" id="fSave">Save recipe</button><span id="fMsg" class="miss"></span></div>`);
+  document.getElementById('fSave').onclick=()=>{
+    const g=id=>document.getElementById(id).value.trim(); const name=g('fName'); const ings=g('fIng').split('\n').map(s=>s.trim()).filter(Boolean).slice(0,40); const steps=g('fSteps').split('\n').map(s=>s.replace(/^\d+[.)]\s*/,'').trim()).filter(Boolean).slice(0,25);
+    if(name.length<2||!ings.length||!steps.length){ document.getElementById('fMsg').textContent='Add a name, at least one ingredient, and at least one step.'; return; }
+    const r={id:'my-'+Date.now().toString(36),name,category:g('fCat'),night:g('fCat')==='Crockpot'?'Crockpot':'Easy',servings:Math.min(30,Math.max(1,+g('fServ')||4)),cook:g('fCook'),tags:[],ingredients:ings.map(parseIngLine),steps,notes:g('fNotes'),source:'Added by you'};
+    S.custom.push(r); persist(); toast('Recipe saved'); openRecipe(r.id);
+  };
+}
+
 /* ---------- boot ---------- */
-S=normalize(S);
+S=normalize(S); onClaude=!!(window.claude&&window.claude.use); if(sbOn()) setTimeout(sbLoad,300);
 function weeklyCheck(){ const wk=weekKey();
   if(S.viewing==='next') switchWeek('this',true);
   if(!S.weekOf){ S.weekOf=wk; return; }

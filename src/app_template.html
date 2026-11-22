@@ -308,7 +308,7 @@ function autoExtras(){
 function autoPlan(silent){ S.plan.days.forEach((d,i)=>{d.id=null;d.mult=null;d.feeds2=false;d.leftFrom=null;d.pickedBy=null; d.type=d.type==='Off'?DEFAULT_TYPES[d.day]:d.type;}); S.plan.breakfast=[]; S.plan.prep=[]; delete S.plan.lunch; delete S.plan.snacks; S.plan.sides=[]; S.prepDone={};
   for(let i=0;i<7;i++) pickFor(i);
   if(S.leftoverNight!==false){ const ok=(d,j)=>{ const r=j<6&&d.id&&byId(d.id); return r&&['Big Cook','Crockpot'].includes(d.type)&&!/breakfast/i.test(r.category+' '+r.tags.join(' ')); }; let i=S.plan.days.findIndex((d,j)=>ok(d,j)&&(byId(d.id).tags.includes('makes leftovers')||byId(d.id).category==='Crockpot')); if(i<0) i=S.plan.days.findIndex(ok); if(i>=0){ const n=S.plan.days[i+1]; S.plan.days[i].feeds2=true; n.type='Off'; n.id=null; n.leftFrom=i; } }
-  autoExtras(); S.checked={}; S.bought={}; const wd=new Date().getDay(); S.weekOf=(!silent&&wd>=5)?weekKey(Date.now()+(7-wd)*864e5):weekKey(); persist(); render(); if(!silent) toast('New week planned'); }
+  autoExtras(); S.checked={}; S.bought={}; S.weekOf=S.viewing==='next'?nextWeekKey():weekKey(); persist(); render(); if(!silent) toast('New week planned'); }
 
 /* ---------- grocery ---------- */
 function planItems(){
@@ -348,18 +348,20 @@ function renderPlan(){
   const g=grocery(); S.bought=S.bought||{}; applyBought(g); const buy=g.filter(x=>!x.have&&!(x.pantry&&S.assumeStaples)&&(!S.bought[x.key]||x.boughtPart));
   const shared=g.filter(x=>x.uses.size>1&&!x.pantry).length;
   const dinners=S.plan.days.filter(d=>d.id).length;
-  let h=`<h2>This week</h2>`;
+  const nx=S.viewing==='next';
+  let h=`<div class="row" style="justify-content:space-between;align-items:flex-end;margin-top:4px"><div><h2 style="margin-bottom:0">${nx?'Next week':'This week'}</h2><span class="muted" style="font-size:13px">${esc(weekRange(nx))}</span></div>
+  <div class="toggles" role="group" aria-label="Which week"><button class="tog" aria-pressed="${!nx}" data-week="this">This week</button><button class="tog" aria-pressed="${nx}" data-week="next">Next week →</button></div></div>`;
   if(S.newWeekBanner) h+=`<div class="banner"><b>New week planned.</b> Swap anything you don't want, then check the grocery list. <button class="havebtn" id="nwOk">Got it</button></div>`;
-  h+=tonightHTML();
+  if(!nx) h+=tonightHTML(); else h+=`<div class="banner">You're planning ahead. When Sunday comes, this plan becomes your week automatically.</div>`;
   const ui=useItUp(); if(ui.length) h+=`<div class="card" style="margin-top:10px"><b>Use it up</b><p class="muted" style="font-size:13px;margin:2px 0 6px">Partial packages this week's meals will leave behind.</p>${ui.map(u=>`<div style="padding:6px 0;border-top:1px solid var(--line)"><span>~${esc(u.left)} ${esc(u.name)} left over.</span>${u.sug.length?` Try: ${u.sug.map(r=>`<button class="havebtn" data-open="${esc(r.id)}">${esc(r.name)}</button>`).join(', ')}`:''}</div>`).join('')}</div>`;
   h+=`<p class="sub" style="margin-top:12px">Dinners sized for ${S.household} + ${S.lunches} lunch${S.lunches===1?'':'es'}. Tap a meal to open it.</p>
   <div class="stats"><div class="stat"><b>${dinners}</b><span>dinners</span></div><div class="stat"><b>${buy.length}</b><span>items to buy</span></div><div class="stat"><b>${shared}</b><span>shared items</span></div></div>
   <div class="row" style="margin-bottom:12px"><button class="btn primary" id="auto">Plan my week for me</button><button class="btn" id="kidsPick">Let the kids pick</button><button class="btn" id="goList">Grocery list</button></div>
   <div class="stack" id="days">`;
   const ti=new Date().getDay();
-  S.plan.days.forEach((d,i)=>{ const r=d.id?byId(d.id):null; const f=r?dinnerFactor(r,d):1; const lf=d.type==='Off'&&d.leftFrom!=null?S.plan.days[d.leftFrom]:null; const lr=lf&&lf.id?byId(lf.id):null;
-    h+=`<div class="day${i===ti?' today':''}" style="--c:${TYPE_COLOR[d.type]}">
-      <div class="dname">${d.day}<small>${i===ti?'Today':esc(d.type==='Off'?'Leftovers':d.type)}</small></div>
+  S.plan.days.forEach((d,i)=>{ const r=d.id?byId(d.id):null; const f=r?dinnerFactor(r,d):1; const isToday=!nx&&i===ti; const lf=d.type==='Off'&&d.leftFrom!=null?S.plan.days[d.leftFrom]:null; const lr=lf&&lf.id?byId(lf.id):null;
+    h+=`<div class="day${isToday?' today':''}" style="--c:${TYPE_COLOR[d.type]}">
+      <div class="dname">${d.day}<small>${!nx&&i===ti?'Today':dayDate(i,nx)}</small><small>${esc(d.type==='Off'?'Leftovers':d.type)}</small></div>
       <div>${r?`<button class="meal" data-open="${esc(r.id)}" data-f="${f}">${esc(r.name)}</button><div class="meta"><span>${yieldText(r,f)}</span><span>· ${esc(r.cook||'')}</span>${d.pickedBy?`<span class="chip m">${esc(d.pickedBy)}'s pick</span>`:r.kid?'<span class="chip">kid pick</span>':''}${feedsTwo(d)?'<span class="chip g">makes 2 nights</span>':''}</div>
         <div class="row" style="margin-top:6px">${d.cooked?`<span class="chip">Cooked ✓</span>${S.favs[r.id]?'<span class="chip m">★ Favorite</span>':''}<button class="havebtn" data-cook="${i}">Edit</button>`:`<button class="btn small" data-cook="${i}">Cooked it? Rate it</button>`}</div>`
         :`<span class="muted">${lr?'Leftovers from '+esc(lr.name):d.type==='Off'?'Night off / leftovers':'Nothing planned'}</span>`}
@@ -395,6 +397,7 @@ function renderPlan(){
   <h3>Move my plan</h3><div class="card"><p class="muted" style="font-size:13px;margin:0 0 8px">Copy your week, pantry, favorites and recipes from this version and paste them into the other one (Claude or Vercel).</p><div class="row"><button class="btn small" id="exp">Copy my data</button><button class="btn small" id="imp">Paste data</button></div></div>`;
   main.innerHTML=h;
   const q=s=>main.querySelector(s);
+  main.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>switchWeek(b.dataset.week));
   q('#auto').onclick=()=>autoPlan(); q('#goList').onclick=()=>setTab('list'); q('#kidsPick').onclick=openKidsPick;
   const nw=q('#nwOk'); if(nw) nw.onclick=()=>{ S.newWeekBanner=false; persist(); render(); };
   main.querySelectorAll('[data-shuffle]').forEach(b=>b.onclick=()=>{const i=+b.dataset.shuffle; const d=S.plan.days[i]; if(d.type==='Off'){ d.type=DEFAULT_TYPES[d.day]==='Off'?'Easy':DEFAULT_TYPES[d.day]; d.leftFrom=null; } pickFor(i); autoExtras(); persist(); render();});
@@ -448,7 +451,7 @@ function renderList(){
   const staples=g.filter(x=>!x.have&&x.pantry&&S.assumeStaples&&notBought(x));
   const have=g.filter(x=>x.have&&notBought(x));
   const done=toBuy.filter(x=>S.checked[x.key]).length;
-  let h=`<h2>Grocery list</h2>${budgetHTML()}<p class="sub" style="margin-top:10px">Combined across ${planItems().length} recipes. Items you already have are moved to the bottom.</p>
+  let h=`<div class="row" style="justify-content:space-between;align-items:flex-end"><h2 style="margin-bottom:0">Grocery list</h2><div class="toggles"><button class="tog" aria-pressed="${S.viewing!=='next'}" data-gweek="this">This week</button><button class="tog" aria-pressed="${S.viewing==='next'}" data-gweek="next">Next week</button></div></div><p class="muted" style="font-size:13px;margin:2px 0 8px">${esc(weekRange(S.viewing==='next'))}</p>${budgetHTML()}<p class="sub" style="margin-top:10px">Combined across ${planItems().length} recipes. Items you already have are moved to the bottom.</p>
   ${toBuy.length?`<button class="btn primary" id="bought" style="width:100%;padding:13px;font-size:16px;margin-bottom:8px">Groceries bought</button>`:''}
   <div class="row" style="margin-bottom:6px"><button class="btn" id="copy">Copy list</button><button class="btn" id="order">Order with Claude</button><button class="btn" id="clr">Uncheck all</button></div>
   <p class="muted" style="font-size:13px;margin:6px 0 0">${done} of ${toBuy.length} in the cart</p>`;
@@ -468,6 +471,7 @@ function renderList(){
   main.querySelectorAll('[data-have]').forEach(b=>b.onclick=()=>{ S.have[b.dataset.have]=true; persist(); renderList(); toast('Moved to Already have'); });
   main.querySelectorAll('[data-need]').forEach(b=>b.onclick=()=>{ const k=b.dataset.need; delete S.have[k]; S.pantry=S.pantry.filter(p=>{const pk=keyOf(p); const pt=toks(p), kt=toks(k); return !(pk===k||pt.every(w=>kt.includes(w))||kt.every(w=>pt.includes(w)));}); persist(); renderList(); });
   const bb=main.querySelector('#bought'); if(bb) bb.onclick=()=>openTrip(()=>{ g.forEach(x=>{ if(!x.have) S.bought[x.key]=Object.assign({}, (typeof S.bought[x.key]==='object'?S.bought[x.key]:{}), x.fullAmts||x.amts); }); S.checked={}; main.scrollTop=0; });
+  main.querySelectorAll('[data-gweek]').forEach(b=>b.onclick=()=>switchWeek(b.dataset.gweek));
   const lt=main.querySelector('#logTrip'); if(lt) lt.onclick=()=>openTrip(null);
   main.querySelectorAll('[data-unbuy]').forEach(b=>b.onclick=()=>{ delete S.bought[b.dataset.unbuy]; persist(); renderList(); });
   const ub=main.querySelector('#unbuyAll'); if(ub) ub.onclick=()=>{ S.bought={}; persist(); renderList(); toast('List restored'); };
@@ -707,6 +711,20 @@ const EXTRA=[
   {k:'sides',label:'Sides & extras',cat:'Holiday',match:r=>r.tags.includes('side')||r.tags.includes('appetizer')}
 ];
 
+/* ---------- this week / next week ---------- */
+function nextWeekKey(){ return weekKey(Date.now()+7*864e5); }
+function weekRange(next){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()+(next?7:0)); const e=new Date(d); e.setDate(d.getDate()+6); const f=x=>x.toLocaleDateString(undefined,{month:'short',day:'numeric'}); return f(d)+' – '+f(e); }
+function dayDate(i,next){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()+i+(next?7:0)); return d.toLocaleDateString(undefined,{month:'numeric',day:'numeric'}); }
+function bundleOf(){ return {plan:S.plan,bought:S.bought,checked:S.checked,prepDone:S.prepDone,weekOf:S.weekOf}; }
+function applyBundle(o){ S.plan=o.plan; S.bought=o.bought||{}; S.checked=o.checked||{}; S.prepDone=o.prepDone||{}; S.weekOf=o.weekOf; ['prep','breakfast'].forEach(k=>{ if(!Array.isArray(S.plan[k])) S.plan[k]=[]; }); }
+function switchWeek(to,quiet){
+  if((S.viewing||'this')===to) return; const cur=bundleOf(); const o=S.otherWeek;
+  S.otherWeek=cur; S.viewing=to;
+  if(o&&o.plan){ applyBundle(o); }
+  else { S.plan=fresh().plan; S.bought={}; S.checked={}; S.prepDone={}; autoPlan(true); }
+  S.newWeekBanner=false; if(!quiet){ persist(); render(); main.scrollTop=0; }
+}
+
 /* ---------- cook times ---------- */
 function parseDur(s){
   s=String(s||'').replace(/(\d)½/g,'$1.5').replace(/½/g,'0.5');
@@ -831,7 +849,7 @@ function openKidsPick(){
   const opts={}; kids.forEach(k=>{ opts[k]=pool.map(r=>[ (S.favs[r.id]?2:0)+kidScore(r)+Math.random()*3, r]).sort((a,b)=>b[0]-a[0]).slice(0,6).map(x=>x[1]); });
   const draw=()=>{ document.getElementById('shBody').innerHTML=`<p class="muted" style="margin-top:0">Each kid taps one dinner. It goes on an open weeknight.</p>`+kids.map(k=>{ const picked=S.plan.days.find(d=>d.pickedBy===k);
     return `<h3>${esc(k)}'s pick${picked?` · <span style="color:var(--basil);text-transform:none;letter-spacing:0">${esc(byId(picked.id)?.name||'')} on ${DAYFULL[picked.day]}</span>`:''}</h3><div class="kpgrid">${opts[k].map(r=>`<button class="kp" data-kp="${esc(k)}|${esc(r.id)}">${esc(r.name)}</button>`).join('')}</div>`; }).join('');
-    document.querySelectorAll('[data-kp]').forEach(b=>b.onclick=()=>{ const [k,id]=b.dataset.kp.split('|'); const ti=new Date().getDay();
+    document.querySelectorAll('[data-kp]').forEach(b=>b.onclick=()=>{ const [k,id]=b.dataset.kp.split('|'); const ti=S.viewing==='next'?-1:new Date().getDay();
       S.plan.days.forEach(d=>{ if(d.pickedBy===k) d.pickedBy=null; });
       const order=[...Array(7).keys()].map(i=>(ti+1+i)%7); let idx=order.find(i=>{ const d=S.plan.days[i]; return ['Easy','Fun'].includes(d.type)&&!d.pickedBy&&!d.cooked; });
       if(idx==null) idx=order.find(i=>!S.plan.days[i].pickedBy&&S.plan.days[i].type!=='Off'&&!S.plan.days[i].cooked);
@@ -888,7 +906,17 @@ function normalize(s){
 
 /* ---------- boot ---------- */
 S=normalize(S);
-function weeklyCheck(){ const wk=weekKey(); if(!S.weekOf){ S.weekOf=wk; return; } if(S.weekOf!==wk&&S.autoWeek!==false){ autoPlan(true); S.newWeekBanner=true; persist(); } }
+function weeklyCheck(){ const wk=weekKey();
+  if(S.viewing==='next') switchWeek('this',true);
+  if(!S.weekOf){ S.weekOf=wk; return; }
+  if(S.weekOf!==wk){
+    const o=S.otherWeek;
+    if(S.weekOf===nextWeekKey()) return;
+    if(o&&o.weekOf===wk){ applyBundle(o); S.otherWeek=null; S.viewing='this'; S.newWeekBanner=true; persist(); return; }
+    if(o&&o.weekOf&&o.weekOf<wk) S.otherWeek=null;
+    if(S.autoWeek!==false){ autoPlan(true); S.newWeekBanner=true; persist(); }
+  }
+  if(S.otherWeek&&S.otherWeek.weekOf&&S.otherWeek.weekOf<wk) S.otherWeek=null; }
 if(!S.plan.days.some(d=>d.id)) autoPlan(true); else weeklyCheck(); render();
 (async()=>{
   try{ if(!window.claude||!window.claude.use) return;
